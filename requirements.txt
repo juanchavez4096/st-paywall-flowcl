@@ -1,6 +1,15 @@
 stripe
 httpx-oauth
-pyjwt
+pyjwt[crypto]
+jwcrypto
+requests
 st-paywall
 mkdocs
 streamlit>=1.27.0
+pyflowcl
+streamlit-cookies-manager
+uuid
+asyncio
+typing-extensions
+six
+streamlit_local_storage

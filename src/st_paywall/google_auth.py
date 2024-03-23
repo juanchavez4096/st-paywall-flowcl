@@ -5,6 +5,10 @@ import jwt
 import streamlit as st
 from httpx_oauth.clients.google import GoogleOAuth2
 from httpx_oauth.oauth2 import OAuth2Token
+from streamlit_local_storage import LocalStorage
+from .consts import TOKEN_COOKIE, EMAIL_COOKIE
+from jwcrypto import jwk
+import requests
 
 testing_mode = st.secrets.get("testing_mode", False)
 
@@ -17,15 +21,27 @@ redirect_url = (
 
 client = GoogleOAuth2(client_id=client_id, client_secret=client_secret)
 
+@st.cache_data(ttl=60 * 60 * 24)
+def get_jwks():
+    return requests.get("https://www.googleapis.com/oauth2/v3/certs").json()
+
 
 def decode_user(token: str):
-    """
-    :param token: jwt token
-    :return:
-    """
-    decoded_data = jwt.decode(jwt=token, options={"verify_signature": False})
-
-    return decoded_data
+    keys = get_jwks()["keys"]
+    for key in keys:
+        pem = jwk.JWK(**key).export_to_pem()
+        try:
+            decoded_token = jwt.decode(
+                token,
+                pem,
+                algorithms=[key["alg"]],
+                audience=client_id,  # Google OAuth2 Client ID
+                issuer="https://accounts.google.com",
+            )
+            return decoded_token
+        except jwt.exceptions.InvalidTokenError:
+            continue
+    raise ValueError("Token cannot be verified")
 
 
 async def get_authorization_url(client: GoogleOAuth2, redirect_url: str) -> str:
@@ -44,7 +60,7 @@ def markdown_button(
 
     markdown(
         f"""
-    <a href="{url}" target="_blank">
+    <a href="{url}" >
         <div style="
             display: inline-flex;
             -webkit-box-align: center;
@@ -74,6 +90,7 @@ def markdown_button(
 async def get_access_token(
     client: GoogleOAuth2, redirect_url: str, code: str
 ) -> OAuth2Token:
+    print('access code: {}'.format(code))
     token = await client.get_access_token(code, redirect_url)
     return token
 
@@ -81,13 +98,13 @@ async def get_access_token(
 def get_access_token_from_query_params(
     client: GoogleOAuth2, redirect_url: str
 ) -> OAuth2Token:
-    query_params = st.experimental_get_query_params()
-    code = query_params["code"][0]
+    query_params = st.query_params.to_dict()
+    code = query_params["code"]
     token = asyncio.run(
         get_access_token(client=client, redirect_url=redirect_url, code=code)
     )
     # Clear query params
-    st.experimental_set_query_params()
+    st.query_params.clear()
     return token
 
 
@@ -100,9 +117,12 @@ def show_login_button(
     markdown_button(authorization_url, text, color, sidebar)
 
 
-def get_logged_in_user_email() -> Optional[str]:
-    if "email" in st.session_state:
-        return st.session_state.email
+def get_logged_in_user_email(local_storage: LocalStorage) -> Optional[str]:
+    token_cookie = local_storage.getItem(TOKEN_COOKIE, pause=0.5)
+    if token_cookie is not None and token_cookie != "":
+        user_info = decode_user(token=token_cookie[TOKEN_COOKIE])
+        st.session_state[EMAIL_COOKIE] = user_info["email"]
+        return user_info["email"]
 
     try:
         token_from_params = get_access_token_from_query_params(client, redirect_url)
@@ -110,7 +130,8 @@ def get_logged_in_user_email() -> Optional[str]:
         return None
 
     user_info = decode_user(token=token_from_params["id_token"])
-
-    st.session_state["email"] = user_info["email"]
+    local_storage.setItem(TOKEN_COOKIE, token_from_params["id_token"])
+    st.session_state[EMAIL_COOKIE] = user_info["email"]
+    
 
     return user_info["email"]
