@@ -31,6 +31,7 @@ def decode_user(token: str):
     for key in keys:
         pem = jwk.JWK(**key).export_to_pem()
         try:
+            
             decoded_token = jwt.decode(
                 token,
                 pem,
@@ -41,8 +42,12 @@ def decode_user(token: str):
             return decoded_token
         except jwt.exceptions.InvalidTokenError:
             continue
-    raise ValueError("Token cannot be verified")
+    return None
 
+def decode_user_without_validate(token: str):
+    decoded_data = jwt.decode(jwt=token, options={"verify_signature": False})
+
+    return decoded_data
 
 async def get_authorization_url(client: GoogleOAuth2, redirect_url: str) -> str:
     authorization_url = await client.get_authorization_url(
@@ -90,7 +95,6 @@ def markdown_button(
 async def get_access_token(
     client: GoogleOAuth2, redirect_url: str, code: str
 ) -> OAuth2Token:
-    print('access code: {}'.format(code))
     token = await client.get_access_token(code, redirect_url)
     return token
 
@@ -117,20 +121,24 @@ def show_login_button(
     markdown_button(authorization_url, text, color, sidebar)
 
 
-def get_logged_in_user_email(local_storage: LocalStorage) -> Optional[str]:
-    token_cookie = local_storage.getItem(TOKEN_COOKIE, pause=0.5)
-    if token_cookie is not None and token_cookie != "":
+def get_logged_in_user_email(get_from_local_storage,
+            set_to_local_storage,) -> Optional[str]:
+    if EMAIL_COOKIE in st.session_state:
+        return st.session_state[EMAIL_COOKIE]
+    
+    token_cookie = get_from_local_storage(TOKEN_COOKIE)
+    if token_cookie is not None and token_cookie != "" and TOKEN_COOKIE in token_cookie:
         user_info = decode_user(token=token_cookie[TOKEN_COOKIE])
-        st.session_state[EMAIL_COOKIE] = user_info["email"]
-        return user_info["email"]
+        if user_info is not None:
+            st.session_state[EMAIL_COOKIE] = user_info["email"]
+            return user_info["email"]
 
     try:
         token_from_params = get_access_token_from_query_params(client, redirect_url)
     except KeyError:
         return None
-
-    user_info = decode_user(token=token_from_params["id_token"])
-    local_storage.setItem(TOKEN_COOKIE, token_from_params["id_token"])
+    user_info = decode_user_without_validate(token=token_from_params["id_token"])
+    set_to_local_storage(TOKEN_COOKIE, token_from_params["id_token"])
     st.session_state[EMAIL_COOKIE] = user_info["email"]
     
 
