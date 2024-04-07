@@ -4,6 +4,7 @@ from pyflowcl import FlowAPI
 from pyflowcl.utils import genera_parametros
 import requests
 from .consts import SUBSCRIBED_COOKIE
+subscription_name = st.secrets.get("subscription_name", "Document text finder subscription")
 
 def get_api_key() -> str:
     testing_mode = st.secrets.get("testing_mode", True)
@@ -69,32 +70,28 @@ def redirect_button(
 
 
 def is_active_subscriber(email: str) -> bool:
-    if SUBSCRIBED_COOKIE in st.session_state and st.session_state[SUBSCRIBED_COOKIE] == True:
-        return True
+    if SUBSCRIBED_COOKIE in st.session_state:
+        return st.session_state[SUBSCRIBED_COOKIE]
     api_key = get_api_key()
     api_secret = get_api_secret()
     endpoint = get_endpoint()
     api = FlowAPI(api_key=api_key, api_secret=api_secret)
     parametrosListClientes = {
         "apiKey": api.api_key,
-        "filter": email,
+        "filter": ''.join(e for e in email if e.isalnum()),
     }
     customer_list = requests.get("https://{}/api{}".format(endpoint, '/customer/list'), params=genera_parametros(parametrosListClientes, api.api_secret))
     if customer_list is None or len(customer_list.json()['data']) == 0:
         return False
-    print(customer_list.json()['data'])
-    return False
+    
+    customer_object = next(x for x in customer_list.json()['data'] if x["email"] == email )
     parametros = {
         "apiKey": api.api_key,
-        "customerId": "Document text finder subscription",
+        "customerId": customer_object['customerId'],
     }
     subscriptions = requests.get("https://{}/api{}".format(endpoint, '/customer/getSubscriptions'), params=genera_parametros(parametros, api.api_secret))
-    #subscriptions = api.objetos.call_subscription_list(parameters=genera_parametros(parametros, api.api_secret))
-    print(subscriptions.json())
-    print(subscriptions.json()['data'])
-    print(len(subscriptions.json()['data']) > 0)
     if subscriptions is not None and len(subscriptions.json()['data']) > 0:
-        # TODO change to customer id
-        return next((x for x in subscriptions.json()['data'] if x["customerId"] == email), None) != None
-    else:
-        return False
+        customer_subscription = next((x for x in subscriptions.json()['data'] if x["customerId"] == customer_object['customerId'] and x['planExternalId'] == subscription_name), None)
+        if customer_subscription is not None and customer_subscription['status'] == 1 and customer_subscription['morose'] == 0:
+            return True
+    return False
